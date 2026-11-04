@@ -1,66 +1,81 @@
-// 1. Исходный массив товаров + 2 дополнительных товара (Пункт 3 из Задания)
-const products = [
-    { id: 1, title: 'Ноутбук 15"', category: 'Компьютеры', price: 85000 },
-    { id: 2, title: 'Монитор 27"', category: 'Компьютеры', price: 28000 },
-    { id: 3, title: 'Клавиатура', category: 'Аксессуары', price: 6500 },
-    { id: 4, title: 'Мышь беспроводная', category: 'Аксессуары', price: 2500 },
-    // Добавленные товары:
-    { id: 5, title: 'Смартфон', category: 'Электроника', price: 45000 },
-    { id: 6, title: 'Наушники', category: 'Аксессуары', price: 12000 }
-];
+const API = 'http://localhost:3000/api';
+let products = [];
+const cart = [];
 
-// Массив, где будут храниться добавленные в корзину товары
-let cart = [];
-
-// Получаем элементы из DOM дерева
 const catalog = document.getElementById('catalog');
 const cartCount = document.getElementById('cart-count');
 const cartSum = document.getElementById('cart-sum');
-const clearCartBtn = document.getElementById('clear-cart');
+const nameInput = document.getElementById('customer-name');
 
-// Функция отрисовки карточек товаров в каталоге
 function renderProducts() {
-    catalog.innerHTML = products.map(p => `
-        <div class="card">
-            <div class="category" style="color: #888; font-size: 12px;">${p.category}</div>
-            <h3 style="margin: 10px 0;">${p.title}</h3>
-            <div class="price" style="font-weight: bold;">${Number(p.price).toLocaleString('ru-RU')} ₽</div>
-            <button data-id="${p.id}">В корзину</button>
-        </div>
-    `).join('');
+  catalog.innerHTML = products.map(p => `
+    <div class="card">
+      <div class="category">${p.category}</div>
+      <h3>${p.title}</h3>
+      <div class="price">${Number(p.price).toLocaleString('ru-RU')} ₽</div>
+      <div class="stock">В наличии: ${p.stock} шт.</div>
+      <button data-id="${p.id}" ${p.stock === 0 ? 'disabled' : ''}>В корзину</button>
+    </div>
+  `).join('');
 }
 
-// Функция пересчета и обновления корзины в шапке
 function renderCart() {
-    // Количество элементов в корзине
-    cartCount.textContent = cart.length;
-    
-    // Подсчет суммы цен всех товаров в корзине
-    const total = cart.reduce((sum, p) => sum + p.price, 0);
-    cartSum.textContent = total.toLocaleString('ru-RU');
+  cartCount.textContent = cart.length;
+  cartSum.textContent = cart
+    .reduce((sum, p) => sum + Number(p.price), 0)
+    .toLocaleString('ru-RU');
 }
 
-// Слушатель кликов по кнопкам "В корзину" (Делегирование событий)
+function groupCart() {
+  const counts = {};
+  cart.forEach(p => { counts[p.id] = (counts[p.id] || 0) + 1; });
+  return Object.entries(counts).map(([id, quantity]) => ({ id: Number(id), quantity }));
+}
+
 catalog.addEventListener('click', e => {
-    if (e.target.tagName !== 'BUTTON') return;
-    
-    // Находим ID товара из атрибута data-id нажатой кнопки
-    const productId = Number(e.target.dataset.id);
-    // Ищем сам товар в массиве products
-    const product = products.find(p => p.id === productId);
-    
-    if (product) {
-        cart.push(product); // Добавляем в корзину
-        renderCart();       // Перерисовываем шапку
-    }
+  if (e.target.tagName !== 'BUTTON') return;
+  const product = products.find(p => p.id === Number(e.target.dataset.id));
+  const inCart = cart.filter(p => p.id === product.id).length;
+  if (inCart >= product.stock) {
+    alert('Больше нет в наличии');
+    return;
+  }
+  cart.push(product);
+  renderCart();
 });
 
-// Слушатель для кнопки "Очистить корзину" (Пункты 1 и 2 из Задания)
-clearCartBtn.addEventListener('click', () => {
-    cart = [];    // Полностью очищаем массив корзины
-    renderCart(); // Обнуляем счетчики в шапке (покажут 0 шт. и 0 ₽)
-});
+async function loadProducts() {
+  try {
+    const response = await fetch(API + '/products');
+    if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
+    products = await response.json();
+    renderProducts();
+  } catch (err) {
+    catalog.innerHTML = '<p>Не удалось загрузить товары. Запущен ли сервер?</p>';
+    console.error(err);
+  }
+}
 
-// Инициализация: отрисовываем товары при загрузке страницы
-renderProducts();
+async function checkout() {
+  const name = nameInput.value.trim();
+  if (!name) return alert('Введите имя');
+  if (cart.length === 0) return alert('Корзина пуста');
+  try {
+    const response = await fetch(API + '/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerName: name, items: groupCart() })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Ошибка оформления заказа');
+    alert('Заказ №' + data.orderId + ' оформлен. Сумма: ' + Number(data.total).toLocaleString('ru-RU') + ' ₽');
+    cart.length = 0;
+    renderCart();
+    await loadProducts();
+  } catch (err) {
+    alert(err.message);
+  }
+}
 
+document.getElementById('checkout').addEventListener('click', checkout);
+loadProducts();
