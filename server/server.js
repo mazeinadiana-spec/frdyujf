@@ -8,7 +8,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(require('path').join(__dirname, '../shop')));
 
-
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -116,6 +115,23 @@ app.post('/api/orders', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   } finally {
     conn.release();
+  }
+});
+
+
+
+// БЕЗОПАСНЫЙ вариант: значение передаётся параметром
+app.get('/api/search', async (req, res) => {
+  try {
+    const q = req.query.title || '';
+    const [rows] = await pool.execute(
+      'SELECT id, title, price FROM products WHERE title LIKE ?',
+      ['%' + q + '%']
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
