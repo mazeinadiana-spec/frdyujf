@@ -49,7 +49,7 @@ function adminOnly(req, res, next) {
 app.get('/api/products', async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT p.id, p.title, p.price, p.stock, c.name AS category
+      `SELECT p.id, p.title, p.price, p.stock, p.category_id, c.name AS category
        FROM products p
        JOIN categories c ON c.id = p.category_id
        ORDER BY p.id`
@@ -194,6 +194,77 @@ app.post('/api/login', async (req, res) => {
     );
     res.json({ token, user: { email: user.email, role: user.role } });
   } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ---------- Управление товарами (только администратор) ----------
+function validateProduct(body) {
+  const { title, price, stock, category_id } = body;
+  if (!title || String(title).trim() === '' || String(title).length > 100) {
+    return 'Название: от 1 до 100 символов';
+  }
+  if (!(Number(price) >= 0)) return 'Цена должна быть числом не меньше 0';
+  if (!Number.isInteger(Number(stock)) || Number(stock) < 0) {
+    return 'Остаток должен быть целым числом не меньше 0';
+  }
+  if (!Number.isInteger(Number(category_id))) return 'Укажите категорию';
+  return null;
+}
+
+app.post('/api/products', auth, adminOnly, async (req, res) => {
+  const problem = validateProduct(req.body);
+  if (problem) return res.status(400).json({ error: problem });
+  const { title, price, stock, category_id } = req.body;
+  try {
+    const [result] = await pool.execute(
+      'INSERT INTO products (title, price, stock, category_id) VALUES (?, ?, ?, ?)',
+      [title.trim(), price, stock, category_id]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (err) {
+    if (err.errno === 1452 || err.errno === 1216) {
+      return res.status(400).json({ error: 'Такой категории нет' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+app.put('/api/products/:id', auth, adminOnly, async (req, res) => {
+  const problem = validateProduct(req.body);
+  if (problem) return res.status(400).json({ error: problem });
+  const { title, price, stock, category_id } = req.body;
+  try {
+    const [result] = await pool.execute(
+      'UPDATE products SET title = ?, price = ?, stock = ?, category_id = ? WHERE id = ?',
+      [title.trim(), price, stock, category_id, req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Товар не найден' });
+    }
+    res.json({ message: 'Товар обновлён' });
+  } catch (err) {
+    if (err.errno === 1452 || err.errno === 1216) {
+      return res.status(400).json({ error: 'Такой категории нет' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+app.delete('/api/products/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM products WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Товар не найден' });
+    }
+    res.json({ message: 'Товар удалён' });
+  } catch (err) {
+    if (err.errno === 1451 || err.errno === 1217) {
+      return res.status(409).json({ error: 'Товар есть в заказах, удалить нельзя' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
