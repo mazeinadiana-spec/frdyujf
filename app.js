@@ -5,7 +5,6 @@ const cart = [];
 const catalog = document.getElementById('catalog');
 const cartCount = document.getElementById('cart-count');
 const cartSum = document.getElementById('cart-sum');
-const nameInput = document.getElementById('customer-name');
 
 function renderProducts() {
   catalog.innerHTML = products.map(p => `
@@ -57,16 +56,23 @@ async function loadProducts() {
 }
 
 async function checkout() {
-  const name = nameInput.value.trim();
-  if (!name) return alert('Введите имя');
+  const token = localStorage.getItem('token');
+  if (!token) return alert('Сначала войдите или зарегистрируйтесь');
   if (cart.length === 0) return alert('Корзина пуста');
   try {
     const response = await fetch(API + '/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerName: name, items: groupCart() })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify({ items: groupCart() })
     });
     const data = await response.json();
+    if (response.status === 401) {
+      logout();
+      throw new Error('Сессия истекла, войдите снова');
+    }
     if (!response.ok) throw new Error(data.error || 'Ошибка оформления заказа');
     alert('Заказ №' + data.orderId + ' оформлен. Сумма: ' + Number(data.total).toLocaleString('ru-RU') + ' ₽');
     cart.length = 0;
@@ -77,5 +83,61 @@ async function checkout() {
   }
 }
 
+// ---------- Вход и регистрация ----------
+function saveAuth(token, user) {
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify(user));
+  updateAuthUI();
+}
+
+function logout() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const user = JSON.parse(localStorage.getItem('user') || 'null');
+  document.getElementById('auth-guest').hidden = !!user;
+  document.getElementById('auth-user').hidden = !user;
+  if (user) document.getElementById('user-email').textContent = user.email;
+}
+
+async function sendAuth(path) {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const response = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Ошибка');
+  return data;
+}
+
+async function login() {
+  try {
+    const data = await sendAuth('/login');
+    saveAuth(data.token, data.user);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function register() {
+  try {
+    await sendAuth('/register');
+    await login();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 document.getElementById('checkout').addEventListener('click', checkout);
+document.getElementById('login-btn').addEventListener('click', login);
+document.getElementById('register-btn').addEventListener('click', register);
+document.getElementById('logout-btn').addEventListener('click', logout);
+
+updateAuthUI();
 loadProducts();

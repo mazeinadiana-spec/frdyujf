@@ -2,11 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(require('path').join(__dirname, '../shop')));
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -22,6 +23,26 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+// ---------- Проверка входа ----------
+function auth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Требуется вход' });
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Недействительный токен' });
+  }
+}
+
+function adminOnly(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Доступ запрещён' });
+  }
+  next();
 }
 
 // ---------- Товары и категории ----------
@@ -51,9 +72,9 @@ app.get('/api/categories', async (req, res) => {
 });
 
 // ---------- Оформление заказа (транзакция) ----------
-app.post('/api/orders', async (req, res) => {
-  const { customerName, items } = req.body;
-  if (!customerName || !Array.isArray(items) || items.length === 0) {
+app.post('/api/orders', auth, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Некорректные данные заказа' });
   }
 
@@ -90,8 +111,8 @@ app.post('/api/orders', async (req, res) => {
     total = Math.round(total * 100) / 100;
 
     const [order] = await conn.execute(
-      'INSERT INTO orders (customer_name, total) VALUES (?, ?)',
-      [customerName, total]
+      'INSERT INTO orders (customer_name, total, user_id) VALUES (?, ?, ?)',
+      [req.user.email, total, req.user.id]
     );
     for (const line of lines) {
       await conn.execute(
@@ -118,9 +139,7 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-
-
-// БЕЗОПАСНЫЙ вариант: значение передаётся параметром
+// ---------- Поиск (безопасный вариант) ----------
 app.get('/api/search', async (req, res) => {
   try {
     const q = req.query.title || '';
@@ -129,6 +148,51 @@ app.get('/api/search', async (req, res) => {
       ['%' + q + '%']
     );
     res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ---------- Регистрация и вход ----------
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    return res.status(400).json({ error: 'Некорректный email' });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'Пароль должен быть не короче 6 символов' });
+  }
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    await pool.execute(
+      'INSERT INTO users (email, password_hash) VALUES (?, ?)',
+      [email, hash]
+    );
+    res.status(201).json({ message: 'Регистрация выполнена' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Пользователь с таким email уже существует' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
+    const user = rows[0];
+    const ok = user && await bcrypt.compare(password || '', user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Неверный email или пароль' });
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '2h' }
+    );
+    res.json({ token, user: { email: user.email, role: user.role } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });

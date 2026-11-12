@@ -53,3 +53,7 @@ header button {
 
 .card .stock { color: #64748b; font-size: 13px; margin-bottom: 10px; }
 .card button:disabled { background: #94a3b8; cursor: not-allowed; }
+[hidden] { display: none !important; }
+
+.header-right { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+#auth-guest, #auth-user { display: flex; gap: 8px; align-items: center; }
