@@ -1,10 +1,15 @@
 const API = 'http://localhost:3000/api';
 let products = [];
 const cart = [];
+let page = 1;
+let pages = 1;
 
 const catalog = document.getElementById('catalog');
 const cartCount = document.getElementById('cart-count');
 const cartSum = document.getElementById('cart-sum');
+const searchInput = document.getElementById('search');
+const categorySelect = document.getElementById('category');
+const sortSelect = document.getElementById('sort');
 
 function renderProducts() {
   catalog.innerHTML = products.map(p => `
@@ -43,17 +48,50 @@ catalog.addEventListener('click', e => {
   renderCart();
 });
 
-async function loadProducts() {
+// ---------- Каталог с фильтрами и страницами ----------
+async function loadCatalog() {
+  const params = new URLSearchParams({ page, limit: 8 });
+  if (searchInput.value.trim()) params.set('search', searchInput.value.trim());
+  if (categorySelect.value) params.set('category', categorySelect.value);
+  if (sortSelect.value) params.set('sort', sortSelect.value);
   try {
-    const response = await fetch(API + '/products');
+    const response = await fetch(API + '/catalog?' + params);
     if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
-    products = await response.json();
+    const data = await response.json();
+    products = data.items;
+    pages = data.pages;
     renderProducts();
+    if (products.length === 0) catalog.innerHTML = '<p>Ничего не найдено</p>';
+    document.getElementById('page-info').textContent = 'Страница ' + page + ' из ' + pages;
+    document.getElementById('prev').disabled = page <= 1;
+    document.getElementById('next').disabled = page >= pages;
   } catch (err) {
     catalog.innerHTML = '<p>Не удалось загрузить товары. Запущен ли сервер?</p>';
     console.error(err);
   }
 }
+
+async function loadCategories() {
+  const response = await fetch(API + '/categories');
+  const list = await response.json();
+  categorySelect.innerHTML = '<option value="">Все категории</option>' +
+    list.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+}
+
+function resetAndLoad() {
+  page = 1;
+  loadCatalog();
+}
+
+let timer;
+searchInput.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(resetAndLoad, 300);
+});
+categorySelect.addEventListener('change', resetAndLoad);
+sortSelect.addEventListener('change', resetAndLoad);
+document.getElementById('prev').addEventListener('click', () => { page--; loadCatalog(); });
+document.getElementById('next').addEventListener('click', () => { page++; loadCatalog(); });
 
 async function checkout() {
   const token = localStorage.getItem('token');
@@ -77,7 +115,7 @@ async function checkout() {
     alert('Заказ №' + data.orderId + ' оформлен. Сумма: ' + Number(data.total).toLocaleString('ru-RU') + ' ₽');
     cart.length = 0;
     renderCart();
-    await loadProducts();
+    await loadCatalog();
   } catch (err) {
     alert(err.message);
   }
@@ -140,4 +178,5 @@ document.getElementById('register-btn').addEventListener('click', register);
 document.getElementById('logout-btn').addEventListener('click', logout);
 
 updateAuthUI();
-loadProducts();
+loadCategories();
+loadCatalog();

@@ -270,6 +270,52 @@ app.delete('/api/products/:id', auth, adminOnly, async (req, res) => {
   }
 });
 
+// ---------- Каталог: поиск, фильтр, сортировка, страницы ----------
+app.get('/api/catalog', async (req, res) => {
+  try {
+    const search = (req.query.search || '').trim();
+    const category = parseInt(req.query.category, 10);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const offset = (page - 1) * limit;
+
+    // порядок сортировки выбираем из белого списка, а не берём из запроса
+    const sorts = { price_asc: 'p.price ASC', price_desc: 'p.price DESC' };
+    const orderBy = sorts[req.query.sort] || 'p.id ASC';
+
+    const where = [];
+    const params = [];
+    if (search) {
+      where.push('p.title LIKE ?');
+      params.push('%' + search + '%');
+    }
+    if (Number.isInteger(category)) {
+      where.push('p.category_id = ?');
+      params.push(category);
+    }
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    const [[{ total }]] = await pool.execute(
+      'SELECT COUNT(*) AS total FROM products p ' + whereSql,
+      params
+    );
+    // limit и offset уже проверены как целые числа, поэтому подставляем их в текст запроса
+    const [items] = await pool.execute(
+      `SELECT p.id, p.title, p.price, p.stock, c.name AS category
+       FROM products p
+       JOIN categories c ON c.id = p.category_id
+       ${whereSql}
+       ORDER BY ${orderBy}
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    res.json({ items, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 app.listen(process.env.PORT, () => {
   console.log('Сервер запущен: http://localhost:' + process.env.PORT);
 });
